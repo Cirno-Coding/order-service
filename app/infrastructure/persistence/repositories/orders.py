@@ -63,7 +63,13 @@ class SqlAlchemyOrderRepository(OrderRepository):
         return self._to_entity(model)
 
     async def update(self, order: Order) -> None:
-        model = await self._session.get(OrderModel, order.id)
+        statement = (
+            select(OrderModel)
+            .where(OrderModel.id == order.id)
+            .options(selectinload(OrderModel.status_history))
+        )
+
+        model = await self._session.scalar(statement)
 
         if model is None:
             raise RuntimeError(f"Order {order.id} does not exist")

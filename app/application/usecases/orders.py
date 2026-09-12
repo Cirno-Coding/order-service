@@ -1,8 +1,10 @@
 from uuid import UUID
 
 from app.application.dto.orders import CreateOrderCommand
-from app.application.exceptions import CatalogItemNotFoundError, InsufficientStockError, OrderNotFoundError
+from app.application.exceptions import CatalogItemNotFoundError, InsufficientStockError, OrderNotFoundError, \
+    ExternalServiceError
 from app.application.ports.catalog import CatalogGateway
+from app.application.ports.payments import PaymentsGateway
 from app.application.ports.uow import UnitOfWorkFactory
 from app.domain.entities import Order
 
@@ -12,9 +14,13 @@ class CreateOrderUseCase:
         self,
         uow_factory: UnitOfWorkFactory,
         catalog_gateway: CatalogGateway,
+        payments_gateway: PaymentsGateway,
+        payment_callback_url: str,
     ) -> None:
         self._uow_factory = uow_factory
         self._catalog_gateway = catalog_gateway
+        self._payments_gateway = payments_gateway
+        self._payment_callback_url = payment_callback_url
 
     async def __call__(self, command: CreateOrderCommand) -> Order:
         async with self._uow_factory() as uow:
@@ -47,6 +53,24 @@ class CreateOrderUseCase:
         async with self._uow_factory() as uow:
             await uow.orders.add(order)
             await uow.commit()
+
+        try:
+            await self._payments_gateway.create_payment(
+                order_id=order.id,
+                amount=order.amount,
+                idempotency_key=f"payment:{order.id}",
+                callback_url=self._payment_callback_url,
+            )
+        except ExternalServiceError:
+            async with self._uow_factory() as uow:
+                stored_order = await uow.orders.get_by_id_for_update(order.id)
+
+                if stored_order is not None:
+                    stored_order.cancel()
+                    await uow.orders.update(stored_order)
+                    await uow.commit()
+
+            raise
 
         return order
 
