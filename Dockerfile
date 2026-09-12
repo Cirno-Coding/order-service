@@ -19,4 +19,4 @@ USER app
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "python -m bin.init_db && { python -m bin.outbox_worker & python -m bin.shipment_consumer & python -m bin.inbox_worker & exec uvicorn app.main:app --host 0.0.0.0 --port 8000; }"]
