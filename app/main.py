@@ -1,16 +1,17 @@
-# This is a sample Python script.
+from fastapi import FastAPI
 
-# Press Shift+F10 to execute it or replace it with your code.
-# Press Double Shift to search everywhere for classes, files, tool windows, actions, and settings.
-
-
-def print_hi(name):
-    # Use a breakpoint in the code line below to debug your script.
-    print(f'Hi, {name}')  # Press Ctrl+F8 to toggle the breakpoint.
+from app.presentation.api.routes.health import router as health_router
 
 
-# Press the green button in the gutter to run the script.
-if __name__ == '__main__':
-    print_hi('PyCharm')
+def create_app() -> FastAPI:
+    app = FastAPI(
+        title="Order Service Capashino",
+        version="0.1.0"
+    )
 
-# See PyCharm help at https://www.jetbrains.com/help/pycharm/
+    app.include_router(health_router)
+
+    return app
+
+
+app = create_app()
