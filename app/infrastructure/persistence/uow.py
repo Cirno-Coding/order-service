@@ -4,7 +4,9 @@ from typing import Self
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.application.ports.uow import UnitOfWork
+from app.infrastructure.persistence.repositories.inbox import SqlAlchemyInboxRepository
 from app.infrastructure.persistence.repositories.orders import SqlAlchemyOrderRepository
+from app.infrastructure.persistence.repositories.outbox import SqlAlchemyOutboxRepository
 from app.infrastructure.persistence.repositories.payment_callbacks import SqlAlchemyPaymentCallbackRepository
 
 
@@ -19,9 +21,13 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         self._session = self._session_factory()
 
         self.orders = SqlAlchemyOrderRepository(self._session)
+
         self.payment_callbacks = SqlAlchemyPaymentCallbackRepository(
             self._session
         )
+
+        self.outbox = SqlAlchemyOutboxRepository(self._session)
+        self.inbox = SqlAlchemyInboxRepository(self._session)
 
         return self
 
@@ -32,6 +38,7 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         traceback: TracebackType | None,
     ) -> None:
         try:
+            # Если commit не был вызван, изменения откатятся.
             await self._session.rollback()
         finally:
             await self._session.close()

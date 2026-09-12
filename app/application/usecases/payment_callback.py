@@ -1,3 +1,7 @@
+from datetime import datetime, UTC
+from uuid import uuid4
+
+from app.application.dto.events import OutboxMessage
 from app.application.dto.orders import PaymentCallbackCommand
 from app.application.exceptions import OrderNotFoundError
 from app.application.ports.uow import UnitOfWorkFactory
@@ -38,6 +42,24 @@ class ProcessPaymentCallbackUseCase:
                 )
 
             await uow.orders.update(order)
+
+            if order.status.value == "PAID":
+                await uow.outbox.add(
+                    OutboxMessage(
+                        id=uuid4(),
+                        channel="KAFKA",
+                        event_type="order.paid",
+                        idempotency_key=f"order-paid:{order.id}",
+                        created_at=datetime.now(UTC),
+                        payload={
+                            "event_type": "order.paid",
+                            "order_id": str(order.id),
+                            "item_id": order.item_id,
+                            "quantity": order.quantity,
+                            "idempotency_key": order.idempotency_key,
+                        },
+                    )
+                )
 
             await uow.payment_callbacks.add(
                 payment_id=command.payment_id,

@@ -6,12 +6,16 @@ from typing import Self
 from app.application.ports.repositories import (
     OrderRepository,
     PaymentCallbackRepository,
+    OutboxRepository,
+    InboxRepository,
 )
 
 
 class UnitOfWork(ABC):
     orders: OrderRepository
     payment_callbacks: PaymentCallbackRepository
+    outbox: OutboxRepository
+    inbox: InboxRepository
 
     @abstractmethod
     async def __aenter__(self) -> Self:
@@ -29,6 +33,7 @@ class UnitOfWork(ABC):
     @abstractmethod
     async def commit(self) -> None:
         pass
+
 
 
 UnitOfWorkFactory = Callable[[], UnitOfWork]

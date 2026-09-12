@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from uuid import UUID
 
+from app.application.dto.events import InboxMessage, OutboxMessage
 from app.domain.entities import Order
 
 
@@ -14,7 +15,10 @@ class OrderRepository(ABC):
         pass
 
     @abstractmethod
-    async def get_by_id_for_update(self, order_id: UUID) -> Order | None:
+    async def get_by_id_for_update(
+        self,
+        order_id: UUID,
+    ) -> Order | None:
         pass
 
     @abstractmethod
@@ -41,4 +45,38 @@ class PaymentCallbackRepository(ABC):
         order_id: UUID,
         status: str,
     ) -> None:
+        pass
+
+
+class OutboxRepository(ABC):
+    @abstractmethod
+    async def add(self, message: OutboxMessage) -> None:
+        pass
+
+    @abstractmethod
+    async def get_pending_for_update(
+        self,
+        limit: int,
+    ) -> list[OutboxMessage]:
+        pass
+
+    @abstractmethod
+    async def mark_as_sent(self, message_id: UUID) -> None:
+        pass
+
+
+class InboxRepository(ABC):
+    @abstractmethod
+    async def add_if_absent(self, message: InboxMessage) -> bool:
+        pass
+
+    @abstractmethod
+    async def get_pending_for_update(
+        self,
+        limit: int,
+    ) -> list[InboxMessage]:
+        pass
+
+    @abstractmethod
+    async def mark_as_processed(self, message_id: UUID) -> None:
         pass

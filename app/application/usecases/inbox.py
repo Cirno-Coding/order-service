@@ -1,0 +1,74 @@
+from datetime import UTC, datetime
+from uuid import UUID, uuid4
+
+from app.application.dto.events import InboxMessage
+from app.application.exceptions import OrderNotFoundError
+from app.application.ports.uow import UnitOfWorkFactory
+
+
+class SaveInboxEventUseCase:
+    def __init__(self, uow_factory: UnitOfWorkFactory) -> None:
+        self._uow_factory = uow_factory
+
+    async def __call__(
+        self,
+        event_key: str,
+        event_type: str,
+        payload: dict[str, object],
+    ) -> bool:
+        message = InboxMessage(
+            id=uuid4(),
+            event_key=event_key,
+            event_type=event_type,
+            payload=payload,
+            created_at=datetime.now(UTC),
+        )
+
+        async with self._uow_factory() as uow:
+            created = await uow.inbox.add_if_absent(message)
+
+            if created:
+                await uow.commit()
+
+            return created
+
+
+class ProcessInboxUseCase:
+    def __init__(
+        self,
+        uow_factory: UnitOfWorkFactory,
+        batch_size: int,
+    ) -> None:
+        self._uow_factory = uow_factory
+        self._batch_size = batch_size
+
+    async def __call__(self) -> int:
+        async with self._uow_factory() as uow:
+            messages = await uow.inbox.get_pending_for_update(
+                self._batch_size
+            )
+
+            for message in messages:
+                order_id = UUID(str(message.payload["order_id"]))
+
+                order = await uow.orders.get_by_id_for_update(order_id)
+
+                if order is None:
+                    raise OrderNotFoundError(order_id)
+
+                if message.event_type == "order.shipped":
+                    order.ship()
+                elif message.event_type == "order.cancelled":
+                    order.cancel()
+                else:
+                    raise ValueError(
+                        f"Unsupported shipment event: {message.event_type}"
+                    )
+
+                await uow.orders.update(order)
+                await uow.inbox.mark_as_processed(message.id)
+
+            if messages:
+                await uow.commit()
+
+            return len(messages)
