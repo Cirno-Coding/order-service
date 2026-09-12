@@ -45,13 +45,22 @@ def register_error_handlers(app: FastAPI) -> None:
         )
 
     @app.exception_handler(InvalidOrderError)
-    @app.exception_handler(InvalidStatusTransitionError)
     async def invalid_order(
         request: Request,
-        exc: Exception,
+        exc: InvalidOrderError,
     ) -> JSONResponse:
         return JSONResponse(
             status_code=400,
+            content={"detail": str(exc)},
+        )
+
+    @app.exception_handler(InvalidStatusTransitionError)
+    async def invalid_status_transition(
+        request: Request,
+        exc: InvalidStatusTransitionError,
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
             content={"detail": str(exc)},
         )
 

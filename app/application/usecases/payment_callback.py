@@ -1,11 +1,12 @@
-from datetime import datetime, UTC
-from uuid import uuid4
-
-from app.application.dto.events import OutboxMessage
 from app.application.dto.orders import PaymentCallbackCommand
 from app.application.exceptions import OrderNotFoundError
+from app.application.outbox_messages import (
+    notification_message,
+    order_paid_message,
+)
 from app.application.ports.uow import UnitOfWorkFactory
 from app.domain.entities import Order
+from app.domain.exceptions import InvalidOrderError
 
 
 class ProcessPaymentCallbackUseCase:
@@ -32,33 +33,42 @@ class ProcessPaymentCallbackUseCase:
             if order is None:
                 raise OrderNotFoundError(command.order_id)
 
-            if command.status == "succeeded":
-                order.pay()
-            elif command.status == "failed":
-                order.cancel()
-            else:
-                raise ValueError(
-                    f"Unsupported payment status: {command.status}"
+            if command.amount != order.amount:
+                raise InvalidOrderError(
+                    "Payment amount does not match order amount"
                 )
 
-            await uow.orders.update(order)
+            if command.status == "succeeded":
+                order.pay()
 
-            if order.status.value == "PAID":
+                await uow.orders.update(order)
+
                 await uow.outbox.add(
-                    OutboxMessage(
-                        id=uuid4(),
-                        channel="KAFKA",
-                        event_type="order.paid",
-                        idempotency_key=f"order-paid:{order.id}",
-                        created_at=datetime.now(UTC),
-                        payload={
-                            "event_type": "order.paid",
-                            "order_id": str(order.id),
-                            "item_id": order.item_id,
-                            "quantity": order.quantity,
-                            "idempotency_key": order.idempotency_key,
-                        },
+                    order_paid_message(order)
+                )
+
+                await uow.outbox.add(
+                    notification_message(order)
+                )
+
+            elif command.status == "failed":
+                order.cancel()
+
+                await uow.orders.update(order)
+
+                await uow.outbox.add(
+                    notification_message(
+                        order,
+                        cancel_reason=(
+                            command.error_message
+                            or "Платёж не был обработан"
+                        ),
                     )
+                )
+
+            else:
+                raise InvalidOrderError(
+                    f"Unsupported payment status: {command.status}"
                 )
 
             await uow.payment_callbacks.add(

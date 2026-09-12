@@ -1,8 +1,13 @@
 from uuid import UUID
 
 from app.application.dto.orders import CreateOrderCommand
-from app.application.exceptions import CatalogItemNotFoundError, InsufficientStockError, OrderNotFoundError, \
-    ExternalServiceError
+from app.application.exceptions import (
+    CatalogItemNotFoundError,
+    ExternalServiceError,
+    InsufficientStockError,
+    OrderNotFoundError,
+)
+from app.application.outbox_messages import notification_message
 from app.application.ports.catalog import CatalogGateway
 from app.application.ports.payments import PaymentsGateway
 from app.application.ports.uow import UnitOfWorkFactory
@@ -52,6 +57,7 @@ class CreateOrderUseCase:
 
         async with self._uow_factory() as uow:
             await uow.orders.add(order)
+            await uow.outbox.add(notification_message(order))
             await uow.commit()
 
         try:
@@ -63,11 +69,25 @@ class CreateOrderUseCase:
             )
         except ExternalServiceError:
             async with self._uow_factory() as uow:
-                stored_order = await uow.orders.get_by_id_for_update(order.id)
+                stored_order = await uow.orders.get_by_id_for_update(
+                    order.id
+                )
 
                 if stored_order is not None:
                     stored_order.cancel()
+
                     await uow.orders.update(stored_order)
+
+                    await uow.outbox.add(
+                        notification_message(
+                            stored_order,
+                            cancel_reason=(
+                                "Не удалось создать платёж. "
+                                "Попробуйте оформить заказ позже."
+                            ),
+                        )
+                    )
+
                     await uow.commit()
 
             raise

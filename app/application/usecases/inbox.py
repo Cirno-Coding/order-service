@@ -3,6 +3,7 @@ from uuid import UUID, uuid4
 
 from app.application.dto.events import InboxMessage
 from app.application.exceptions import OrderNotFoundError
+from app.application.outbox_messages import notification_message
 from app.application.ports.uow import UnitOfWorkFactory
 
 
@@ -58,14 +59,35 @@ class ProcessInboxUseCase:
 
                 if message.event_type == "order.shipped":
                     order.ship()
+
+                    await uow.orders.update(order)
+
+                    await uow.outbox.add(
+                        notification_message(order)
+                    )
+
                 elif message.event_type == "order.cancelled":
                     order.cancel()
+
+                    cancel_reason = message.payload.get("reason")
+
+                    if not isinstance(cancel_reason, str):
+                        cancel_reason = "Товар недоступен для доставки"
+
+                    await uow.orders.update(order)
+
+                    await uow.outbox.add(
+                        notification_message(
+                            order,
+                            cancel_reason=cancel_reason,
+                        )
+                    )
+
                 else:
                     raise ValueError(
                         f"Unsupported shipment event: {message.event_type}"
                     )
 
-                await uow.orders.update(order)
                 await uow.inbox.mark_as_processed(message.id)
 
             if messages:
