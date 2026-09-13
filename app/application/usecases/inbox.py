@@ -4,6 +4,7 @@ from uuid import UUID, uuid4
 from app.application.dto.events import InboxMessage
 from app.application.outbox_messages import notification_message
 from app.application.ports.uow import UnitOfWorkFactory
+from app.domain.entities import OrderStatus
 
 
 class SaveInboxEventUseCase:
@@ -43,6 +44,8 @@ class ProcessInboxUseCase:
         self._batch_size = batch_size
 
     async def __call__(self) -> int:
+        processed_count = 0
+
         async with self._uow_factory() as uow:
             messages = await uow.inbox.get_pending_for_update(
                 self._batch_size
@@ -53,46 +56,67 @@ class ProcessInboxUseCase:
 
                 order = await uow.orders.get_by_id_for_update(order_id)
 
-                # Топик общий для всех студентов. Чужое событие
-                # не является ошибкой и не должно блокировать очередь.
+                # Событие другого студента из общего Kafka-топика.
                 if order is None:
                     await uow.inbox.mark_as_processed(message.id)
+                    processed_count += 1
                     continue
 
                 if message.event_type == "order.shipped":
-                    order.ship()
+                    if order.status == OrderStatus.NEW:
+                        # Событие пришло раньше успешной оплаты.
+                        # Оставляем его PENDING для повторной попытки.
+                        continue
 
-                    await uow.orders.update(order)
+                    if order.status == OrderStatus.PAID:
+                        order.ship()
 
-                    await uow.outbox.add(
-                        notification_message(order)
-                    )
+                        await uow.orders.update(order)
+
+                        await uow.outbox.add(
+                            notification_message(order)
+                        )
+
+                    # При SHIPPED или CANCELLED событие устарело либо
+                    # дублируется. Повторно менять статус не нужно.
+                    await uow.inbox.mark_as_processed(message.id)
+                    processed_count += 1
 
                 elif message.event_type == "order.cancelled":
-                    order.cancel()
+                    if order.status in {
+                        OrderStatus.NEW,
+                        OrderStatus.PAID,
+                    }:
+                        order.cancel()
 
-                    cancel_reason = message.payload.get("reason")
+                        cancel_reason = message.payload.get("reason")
 
-                    if not isinstance(cancel_reason, str):
-                        cancel_reason = "Товар недоступен для доставки"
+                        if not isinstance(cancel_reason, str):
+                            cancel_reason = (
+                                "Товар недоступен для доставки"
+                            )
 
-                    await uow.orders.update(order)
+                        await uow.orders.update(order)
 
-                    await uow.outbox.add(
-                        notification_message(
-                            order,
-                            cancel_reason=cancel_reason,
+                        await uow.outbox.add(
+                            notification_message(
+                                order,
+                                cancel_reason=cancel_reason,
+                            )
                         )
-                    )
+
+                    # Для CANCELLED и SHIPPED повторное/устаревшее
+                    # событие просто считаем обработанным.
+                    await uow.inbox.mark_as_processed(message.id)
+                    processed_count += 1
 
                 else:
                     raise ValueError(
-                        f"Unsupported shipment event: {message.event_type}"
+                        f"Unsupported shipment event: "
+                        f"{message.event_type}"
                     )
 
-                await uow.inbox.mark_as_processed(message.id)
-
-            if messages:
+            if processed_count:
                 await uow.commit()
 
-            return len(messages)
+        return processed_count
