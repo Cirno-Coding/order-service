@@ -2,7 +2,6 @@ from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from app.application.dto.events import InboxMessage
-from app.application.exceptions import OrderNotFoundError
 from app.application.outbox_messages import notification_message
 from app.application.ports.uow import UnitOfWorkFactory
 
@@ -54,8 +53,11 @@ class ProcessInboxUseCase:
 
                 order = await uow.orders.get_by_id_for_update(order_id)
 
+                # Топик общий для всех студентов. Чужое событие
+                # не является ошибкой и не должно блокировать очередь.
                 if order is None:
-                    raise OrderNotFoundError(order_id)
+                    await uow.inbox.mark_as_processed(message.id)
+                    continue
 
                 if message.event_type == "order.shipped":
                     order.ship()
