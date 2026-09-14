@@ -2,15 +2,21 @@ from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, AliasChoices
 
 from app.application.dto.orders import PaymentCallbackCommand
 
 
 class PaymentCallbackRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    # Реальный Payments Service может передать дополнительные поля
+    # (например, user_id, idempotency_key, created_at).
+    model_config = ConfigDict(extra="ignore")
 
-    payment_id: UUID
+    # Поддерживаем формат из задания (payment_id) и возможный формат
+    # полного объекта платежа (id).
+    payment_id: UUID = Field(
+        validation_alias=AliasChoices("payment_id", "id")
+    )
     order_id: UUID
     status: Literal["succeeded", "failed"]
     amount: Decimal

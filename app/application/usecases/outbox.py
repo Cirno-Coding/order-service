@@ -17,9 +17,17 @@ class ProcessOutboxUseCase:
         self._batch_size = batch_size
 
     async def __call__(self) -> int:
+        processed_count = 0
+
         async with self._uow_factory() as uow:
             messages = await uow.outbox.get_pending_for_update(
                 self._batch_size
+            )
+
+            # Публикация order.paid важнее отправки уведомлений:
+            # временная ошибка Notifications не должна блокировать Shipping.
+            messages.sort(
+                key=lambda message: message.channel != "KAFKA"
             )
 
             for message in messages:
@@ -44,7 +52,11 @@ class ProcessOutboxUseCase:
 
                 await uow.outbox.mark_as_sent(message.id)
 
-            if messages:
+                # Фиксируем каждое сообщение отдельно. Если внешний
+                # Notifications Service вернёт 500, уже опубликованное
+                # Kafka-событие не откатится.
                 await uow.commit()
 
-            return len(messages)
+                processed_count += 1
+
+        return processed_count

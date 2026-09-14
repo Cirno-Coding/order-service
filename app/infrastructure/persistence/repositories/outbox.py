@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import case, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.dto.events import OutboxMessage
@@ -30,10 +30,19 @@ class SqlAlchemyOutboxRepository(OutboxRepository):
         self,
         limit: int,
     ) -> list[OutboxMessage]:
+        channel_priority = case(
+            (OutboxModel.channel == "KAFKA", 0),
+            else_=1,
+        )
+
         statement = (
             select(OutboxModel)
             .where(OutboxModel.status == "PENDING")
-            .order_by(OutboxModel.created_at, OutboxModel.id)
+            .order_by(
+                channel_priority,
+                OutboxModel.created_at,
+                OutboxModel.id,
+            )
             .limit(limit)
             .with_for_update(skip_locked=True)
         )
